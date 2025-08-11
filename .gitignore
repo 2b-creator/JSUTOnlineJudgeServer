@@ -1,0 +1,14 @@
+/*
+
+!.gitignore
+!judge_server/
+!judge_server/**/*
+!problems/
+!problems/**/*
+!contests/
+!contests/**/*
+!requirements.txt
+!init.sh
+!README.md
+__pycache__/
+db.sqlite3
