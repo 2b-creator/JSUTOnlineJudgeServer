@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'tailwind',
     'rest_framework',
     'rest_framework_simplejwt',
+    'django_apscheduler',
     'django_celery_results',
     'theme',
     'judge',

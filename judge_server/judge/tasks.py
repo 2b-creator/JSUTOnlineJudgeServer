@@ -1,7 +1,12 @@
 # judge/tasks.py
+import base64
+import json
+from typing import List
 from celery import shared_task
-from .models import Submission, JudgeUser, MainProblem
+import requests
+from .models import Competition, ContestRegistration, Submission, JudgeUser, MainProblem
 from .utils import call_judge_cpp, call_judge_python  # 判题逻辑实现
+from .config import *
 import logging
 
 logger = logging.getLogger(__name__)
@@ -88,3 +93,72 @@ def judge_submission(self, submission_id, lang_mode):
             submission.status = 'RJ'  # 新增错误状态
             submission.save()
         return {'error': str(e)}
+
+
+def import_reg_to_dom(contest: Competition):
+    users: List[JudgeUser] = contest.registered.all()
+    registration = ContestRegistration.objects.get(user=users, contest=contest)
+    cid = contest.cid
+    resp = requests.get(f"{domserver}/api/v4/contests/{cid}/groups")
+    get_dic = resp.json()
+    org = [{
+        "id": "JSUT",
+        "name": "JSUT",
+        "formal_name": "Jiangsu University of Technology",
+        "country": "CHN"
+    }]
+    user_passwd = f"{domadmin}:{domadmin_password}"
+    string_bytes = user_passwd.encode('utf-8')
+    encoded_string = base64.b64encode(string_bytes)
+    resp = requests.post(f"{domserver}/api/v4/contests/{cid}/organizations", json=org, headers={
+        "Authorization": f"Basic {encoded_string}"
+    })
+    resp = requests.get(f"{domserver}/api/v4/contests/{cid}/organizations")
+    org_dic = resp.json()
+    ls_post = []
+    accounts = []
+    for user in users:
+        group_ids = [group["id"]
+                     for group in get_dic if group["name"] == "Participants"]
+
+        # 获取 'JSUT' 组织的ID（单个字符串）
+        org_id = next((org["id"]
+                      for org in org_dic if org["name"] == "JSUT"), None)
+        dic = {
+            "id": f"{registration.prefix}-{user.id}",
+            "group_ids": group_ids,          # 修正：组ID列表
+            "name": user.username,
+            "display_name": user.nickname if user.nickname else user.username,
+            "organization_id": org_id       # 修正：单个组织ID（非列表）
+        }
+        ls_post.append(dic)
+    resp = requests.get(f"{domserver}/api/v4/contests/{cid}/teams")
+    teams = resp.json()
+    for user in users:
+        team_id = next(
+            (team["id"] for team in teams if team["name"] == user.username), None)
+        dic = {
+            "id": f"{registration.prefix}-{user.id}-account",
+            "username": user.username, 
+            "password": user.domserver_password,
+            "type": "team",
+            "team_id": team_id
+        }
+        accounts.append(dic)
+    json_data = json.dumps(ls_post, ensure_ascii=False).encode('utf-8')
+    url = f"{domserver}/api/v4/users/teams"  # 替换实际URL
+    files = {
+        # 关键：服务端要求字段名为 "teams.json"，类型为二进制
+        "teams.json": ("teams.json", json_data, "application/json")
+    }
+    requests.post(url, files=files, headers={
+        "Authorization": f"Basic {encoded_string}"
+    })
+    json_data = json.dumps(dic, ensure_ascii=False).encode('utf-8')
+    url = f"{domserver}/api/v4/users/accounts"
+    files = {
+        "teams.json": ("teams.json", json_data, "application/json")
+    }
+    requests.post(url, files=files, headers={
+        "Authorization": f"Basic {encoded_string}"
+    })
