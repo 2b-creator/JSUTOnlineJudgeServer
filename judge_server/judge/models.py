@@ -12,6 +12,16 @@ def generate_domserver_password():
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(10))
 
+class DomServerSave(models.Model):
+    singleton_id = models.IntegerField(default=1, unique=True, editable=False)
+    admin = models.CharField(max_length=100)
+    init_passwd = models.CharField(max_length=100)
+    api_key = models.CharField(max_length=100)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['singleton_id'], name='unique_singleton')
+        ]
 
 class MainProblem(models.Model):
     title = models.CharField(max_length=100)

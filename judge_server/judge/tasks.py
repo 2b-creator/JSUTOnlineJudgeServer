@@ -4,10 +4,12 @@ import json
 from typing import List
 from celery import shared_task
 import requests
-from .models import Competition, ContestRegistration, Submission, JudgeUser, MainProblem
+from .models import Competition, ContestRegistration, DomServerSave, Submission, JudgeUser, MainProblem
 from .utils import call_judge_cpp, call_judge_python  # 判题逻辑实现
 from .config import *
 import logging
+import docker
+from docker.errors import NotFound, APIError
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +109,8 @@ def import_reg_to_dom(contest: Competition):
         "formal_name": "Jiangsu University of Technology",
         "country": "CHN"
     }]
-    user_passwd = f"{domadmin}:{domadmin_password}"
+    dom_admin = DomServerSave.objects.get(singleton_id=1)
+    user_passwd = f"{dom_admin.admin}:{dom_admin.init_passwd}"
     string_bytes = user_passwd.encode('utf-8')
     encoded_string = base64.b64encode(string_bytes)
     resp = requests.post(f"{domserver}/api/v4/contests/{cid}/organizations", json=org, headers={
@@ -139,7 +142,7 @@ def import_reg_to_dom(contest: Competition):
             (team["id"] for team in teams if team["name"] == user.username), None)
         dic = {
             "id": f"{registration.prefix}-{user.id}-account",
-            "username": user.username, 
+            "username": user.username,
             "password": user.domserver_password,
             "type": "team",
             "team_id": team_id
@@ -162,3 +165,128 @@ def import_reg_to_dom(contest: Competition):
     requests.post(url, files=files, headers={
         "Authorization": f"Basic {encoded_string}"
     })
+
+
+def setup_dom():
+    client = docker.from_env()
+    container = client.containers.run(
+        # 基础镜像
+        "mariadb",
+
+        # 容器名称
+        name="dj-mariadb",
+
+        # 环境变量
+        environment={
+            "MYSQL_ROOT_PASSWORD": "rootpw",
+            "MYSQL_USER": "domjudge",
+            "MYSQL_PASSWORD": "domserver_password",
+            "MYSQL_DATABASE": "domjudge"
+        },
+
+        # 端口映射（主机端口:容器端口）
+        ports={"3306/tcp": 13306},
+
+        # 交互模式参数
+        stdin_open=True,  # -i 保持 STDIN 打开
+        tty=True,         # -t 分配伪终端
+
+        # MariaDB 特定参数
+        command="--max-connections=1000",  # 传递给容器的命令参数
+
+        # 其他选项
+        detach=True,  # 在后台运行（类似 docker run -d）
+
+        # 自动删除容器（可选，根据需要启用）
+        # auto_remove=True,
+
+        # 重启策略（可选）
+        # restart_policy={"Name": "always"}
+    )
+    try:
+        mariadb_container = client.containers.get("dj-mariadb")
+
+    except docker.errors.NotFound:
+        print("错误: dj-mariadb 容器不存在，请先创建它")
+        exit(1)
+
+    # 运行 domserver 容器
+    container = client.containers.run(
+        # 基础镜像
+        "domjudge/domserver:latest",
+
+        # 容器名称
+        name="domserver",
+
+        # 环境变量
+        environment={
+            "MYSQL_HOST": "mariadb",
+            "MYSQL_USER": "domjudge",
+            "MYSQL_DATABASE": "domjudge",
+            "MYSQL_PASSWORD": "djpw",
+            "MYSQL_ROOT_PASSWORD": "rootpw"
+        },
+
+        # 链接到 MariaDB 容器
+        links={"dj-mariadb": "mariadb"},
+
+        # 端口映射（主机端口:容器端口）
+        ports={"80/tcp": 12345},
+
+        # 交互模式参数
+        stdin_open=True,  # -i 保持 STDIN 打开
+        tty=True,         # -t 分配伪终端
+
+        # 其他选项
+        detach=True,      # 在后台运行
+
+        # 自动删除容器（可选）
+        # auto_remove=True,
+
+        # 重启策略（可选）
+        # restart_policy={"Name": "always"}
+    )
+
+
+def get_domjudge_secrets(container_name="domserver"):
+    try:
+        # 创建 Docker 客户端
+        client = docker.from_env()
+
+        # 获取 DomServer 容器
+        container = client.containers.get(container_name)
+
+        # 获取初始管理员密码
+        print("正在获取初始管理员密码...")
+        admin_pass = container.exec_run(
+            "cat /opt/domjudge/domserver/etc/initial_admin_password.secret",
+            tty=True,
+            stdin=True
+        ).output.decode().strip()
+
+        # 获取 REST API 密钥
+        print("正在获取 REST API 密钥...")
+        api_secret: str = container.exec_run(
+            "cat /opt/domjudge/domserver/etc/restapi.secret",
+            tty=True,
+            stdin=True
+        ).output.decode().strip()
+        api_key = api_secret.split()[-1]
+        DomServerSave.objects.update(
+            singleton_id=1, admin='admin', init_passwd=admin_pass, api_key=api_key)
+
+        # 返回结果
+        return {
+            "admin_password": admin_pass,
+            "api_secret": api_secret
+        }
+
+    except NotFound:
+        print(f"错误: 找不到名为 {container_name} 的容器")
+        return None
+    except APIError as e:
+        print(f"Docker API 错误: {e}")
+        return None
+    except Exception as e:
+        print(f"未知错误: {e}")
+        return None

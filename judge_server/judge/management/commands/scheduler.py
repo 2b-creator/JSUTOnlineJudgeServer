@@ -4,7 +4,7 @@ from apscheduler.triggers.date import DateTrigger
 from django.utils import timezone
 from datetime import datetime, timedelta
 from judge.tasks import my_scheduled_task  # 导入你的任务函数
-
+import uuid
 
 def start_scheduler():
     scheduler = BlockingScheduler(timezone=timezone.get_current_timezone())
@@ -15,7 +15,7 @@ def start_scheduler():
     scheduler.add_job(
         my_scheduled_task,
         trigger=DateTrigger(run_date=run_time),
-        id='unique_job_id'
+        id=uuid.uuid4()
     )
 
     try:

@@ -6,9 +6,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.views import APIView
+
+from judge_server.judge.apps import JudgeConfig
 from .models import CompetitionGroup, ContestRegistration, Submission, JudgeUser, MainProblem, ProblemTags
 from .models import JudgeUser
-from .tasks import judge_submission
+from .tasks import get_domjudge_secrets, judge_submission, setup_dom
 from django.utils import timezone
 from django.http import StreamingHttpResponse
 from .config import *
@@ -360,7 +362,23 @@ class AddCompetitionDesView(APIView):
         contest = Competition.objects.create(
             cid=cid, group=rate_group, description=description, start_time=start_time, finish_time=finish_time, frozen_duration=frozen_duration, name=name)
         contest.save()
-        return Response({"status": "OK"}, status=status.HTTP_201_CREATED)
+        scheduler = JudgeConfig.scheduler
+        job_id = f"contest_init_job_{scheduler}"
+        scheduler.add_job(
+            setup_dom(),
+            'date',
+            run_date=datetime.now()+timedelta(minutes=1),
+            # args=[data],  # 传递整个JSON数据到任务
+            id=job_id
+        )
+        scheduler.add_job(
+            get_domjudge_secrets(),
+            'date',
+            run_date=datetime.now()+timedelta(minutes=5),
+            # args=[data],  # 传递整个JSON数据到任务
+            id=job_id
+        )
+        return Response({"status": "OK", 'create_contest_job_id': job_id}, status=status.HTTP_201_CREATED)
 
 
 class GetAllCompetitionView(APIView):
