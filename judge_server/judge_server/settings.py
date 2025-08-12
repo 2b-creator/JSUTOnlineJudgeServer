@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django_celery_results',
     'theme',
     'judge',
+    # 'judge.apps.JudgeConfig',
 ]
 TAILWIND_APP_NAME = 'theme'
 REST_FRAMEWORK = {

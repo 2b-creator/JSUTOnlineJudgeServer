@@ -19,6 +19,8 @@ urlpatterns = [
     path('get_tag_color/', GetTagColor.as_view(), name='get-tag-color'),
     path('problem_detail/', GetProblemDetail.as_view(), name='problem-detail'),
 
+    path('reset_dom/', ResetDomView.as_view(), name='reset-dom'),
+
     path('add_contest_rate_group/', AddContestGroup.as_view(),
          name='add-contest-rate-group'),
     path('add_contest/', AddCompetitionDesView.as_view(),

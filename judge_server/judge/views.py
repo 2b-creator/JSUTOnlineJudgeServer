@@ -1,4 +1,5 @@
 from datetime import timedelta
+from django.apps import apps
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -6,17 +7,18 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.views import APIView
-
-from judge_server.judge.apps import JudgeConfig
+from django_apscheduler.jobstores import DjangoJobStore, register_events, register_job
+from .apps import JudgeConfig
 from .models import CompetitionGroup, ContestRegistration, Submission, JudgeUser, MainProblem, ProblemTags
 from .models import JudgeUser
-from .tasks import get_domjudge_secrets, judge_submission, setup_dom
+from .tasks import get_domjudge_secrets, import_reg_to_dom, judge_submission, remove_all_running_containers, setup_dom
 from django.utils import timezone
 from django.http import StreamingHttpResponse
 from .config import *
 from django.core.files.storage import FileSystemStorage
 from pathlib import Path
 from .utils import *
+from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 import zipfile
 import os
@@ -362,20 +364,30 @@ class AddCompetitionDesView(APIView):
         contest = Competition.objects.create(
             cid=cid, group=rate_group, description=description, start_time=start_time, finish_time=finish_time, frozen_duration=frozen_duration, name=name)
         contest.save()
-        scheduler = JudgeConfig.scheduler
-        job_id = f"contest_init_job_{scheduler}"
-        scheduler.add_job(
-            setup_dom(),
-            'date',
-            run_date=datetime.now()+timedelta(minutes=1),
-            # args=[data],  # 传递整个JSON数据到任务
-            id=job_id
-        )
+        judge_config = apps.get_app_config('judge')
+
+        # Use existing scheduler or create once
+        if not hasattr(judge_config, 'scheduler'):
+            scheduler = BackgroundScheduler()
+            scheduler.add_jobstore(DjangoJobStore(), "default")
+            scheduler.start()
+            judge_config.scheduler = scheduler
+        else:
+            scheduler = judge_config.scheduler
+
+        job_id = f"contest_init_job_{scheduler}_getdom"
         scheduler.add_job(
             get_domjudge_secrets(),
             'date',
-            run_date=datetime.now()+timedelta(minutes=5),
+            run_date=contest.start_time-timedelta(minutes=6),
             # args=[data],  # 传递整个JSON数据到任务
+            id=job_id
+        )
+        job_id = f"contest_init_job_{scheduler}_regdom"
+        scheduler.add_job(
+            import_reg_to_dom(),
+            'date',
+            run_date=contest.start_time-timedelta(minutes=5),
             id=job_id
         )
         return Response({"status": "OK", 'create_contest_job_id': job_id}, status=status.HTTP_201_CREATED)
@@ -591,7 +603,7 @@ class SubmitContestProblem(APIView):
         domserver_password = user.domserver_password
         user_passwd = f"{username}:{domserver_password}"
         string_bytes = user_passwd.encode('utf-8')
-        encoded_string = base64.b64encode(string_bytes)
+        encoded_string = base64.b64encode(string_bytes).decode('utf-8')
         payload = {
             'code[]': (file_path.name, open(file_path, 'rb')),
             "language_id": lang,
@@ -618,7 +630,7 @@ class PostGetContestSubmission(APIView):
         domserver_password = current_user.domserver_password
         user_passwd = f"{username}:{domserver_password}"
         string_bytes = user_passwd.encode('utf-8')
-        encoded_string = base64.b64encode(string_bytes)
+        encoded_string = base64.b64encode(string_bytes).decode('utf-8')
         headers = {
             "Authorization": f"Basic {encoded_string}"
         }
@@ -639,7 +651,7 @@ class ScoreboardGet(APIView):
             domserver_password = user.domserver_password
             user_passwd = f"{user.username}:{domserver_password}"
             string_bytes = user_passwd.encode('utf-8')
-            encoded_string = base64.b64encode(string_bytes)
+            encoded_string = base64.b64encode(string_bytes).decode('utf-8')
             headers = {
                 "Authorization": f"Basic {encoded_string}"
             }
@@ -650,3 +662,44 @@ class ScoreboardGet(APIView):
                 f"{domserver}/api/v4/contests/{cid}/scoreboard")
         resp_dic = resp.json()
         return Response(resp_dic, status=status.HTTP_200_OK)
+
+
+class ResetDomView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):  # Fix method signature (self, request)
+        judge_config = apps.get_app_config('judge')
+
+        # Use existing scheduler or create once
+        if not hasattr(judge_config, 'scheduler'):
+            scheduler = BackgroundScheduler()
+            scheduler.add_jobstore(DjangoJobStore(), "default")
+            scheduler.start()
+            judge_config.scheduler = scheduler
+        else:
+            scheduler = judge_config.scheduler
+
+        # Schedule jobs using top-level functions
+        remove_job_id = f"remove_dom_{datetime.now().timestamp()}"
+        reinstall_job_id = f"reinstall_dom_{datetime.now().timestamp()}"
+        get_dom_id = f"get_dom_{datetime.now().timestamp()}"
+        scheduler.add_job(
+            remove_all_running_containers,
+            'date',
+            run_date=datetime.now() + timedelta(seconds=1),
+            id=remove_job_id
+        )
+
+        scheduler.add_job(
+            setup_dom,
+            'date',
+            run_date=datetime.now() + timedelta(seconds=3),
+            id=reinstall_job_id
+        )
+        scheduler.add_job(
+            get_domjudge_secrets,
+            'date',
+            run_date=datetime.now() + timedelta(seconds=10),
+            id=get_dom_id
+        )
+        return Response({"status": "DOM reset scheduled"})

@@ -1,1 +1,1 @@
-domserver = "http://192.168.3.139"
+domserver = "http://127.0.0.1"

@@ -1,0 +1,7 @@
+title = "两数相加"
+timelimit = 1
+memlimit = 512
+tags = ["入门", "测试"]
+order_char = "A"
+public = true
+contest_name = "测试赛"

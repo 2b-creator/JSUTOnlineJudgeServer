@@ -112,7 +112,7 @@ def import_reg_to_dom(contest: Competition):
     dom_admin = DomServerSave.objects.get(singleton_id=1)
     user_passwd = f"{dom_admin.admin}:{dom_admin.init_passwd}"
     string_bytes = user_passwd.encode('utf-8')
-    encoded_string = base64.b64encode(string_bytes)
+    encoded_string = base64.b64encode(string_bytes).decode('utf-8')
     resp = requests.post(f"{domserver}/api/v4/contests/{cid}/organizations", json=org, headers={
         "Authorization": f"Basic {encoded_string}"
     })
@@ -168,6 +168,7 @@ def import_reg_to_dom(contest: Competition):
 
 
 def setup_dom():
+    print("🚀开始安装 domserver")
     client = docker.from_env()
     container = client.containers.run(
         # 基础镜像
@@ -181,7 +182,8 @@ def setup_dom():
             "MYSQL_ROOT_PASSWORD": "rootpw",
             "MYSQL_USER": "domjudge",
             "MYSQL_PASSWORD": "domserver_password",
-            "MYSQL_DATABASE": "domjudge"
+            "MYSQL_DATABASE": "domjudge",
+            "CONTAINER_TIMEZONE": "Asia/Shanghai"
         },
 
         # 端口映射（主机端口:容器端口）
@@ -223,7 +225,7 @@ def setup_dom():
             "MYSQL_HOST": "mariadb",
             "MYSQL_USER": "domjudge",
             "MYSQL_DATABASE": "domjudge",
-            "MYSQL_PASSWORD": "djpw",
+            "MYSQL_PASSWORD": "domserver_password",
             "MYSQL_ROOT_PASSWORD": "rootpw"
         },
 
@@ -272,10 +274,17 @@ def get_domjudge_secrets(container_name="domserver"):
             stdin=True
         ).output.decode().strip()
         api_key = api_secret.split()[-1]
-        DomServerSave.objects.update(
-            singleton_id=1, admin='admin', init_passwd=admin_pass, api_key=api_key)
+        d, created = DomServerSave.objects.update_or_create(
+            singleton_id=1,  # Lookup field (unique)
+            defaults={  # Fields to update/create
+                'admin': 'admin',
+                'init_passwd': admin_pass,
+                'api_key': api_key
+            }
+        )
 
         # 返回结果
+        print("命令成功完成")
         return {
             "admin_password": admin_pass,
             "api_secret": api_secret
@@ -290,3 +299,38 @@ def get_domjudge_secrets(container_name="domserver"):
     except Exception as e:
         print(f"未知错误: {e}")
         return None
+
+
+def remove_all_running_containers():
+    try:
+        # 创建 Docker 客户端
+        client = docker.from_env()
+
+        # 获取所有正在运行的容器
+        running_containers = client.containers.list(all=True)
+
+        if not running_containers:
+            print("没有正在运行的容器")
+            return
+
+        print(f"发现 {len(running_containers)} 个正在运行的容器，开始删除...")
+
+        # 删除每个容器
+        for container in running_containers:
+            try:
+                print(f"删除容器: {container.name} ({container.id})")
+                container.remove(force=True)  # 强制删除（包括运行中的容器）
+            except docker.errors.APIError as e:
+                print(f"删除容器 {container.name} 失败: {e}")
+
+        print("所有正在运行的容器已删除")
+
+    except docker.errors.DockerException as e:
+        print(f"连接Docker失败: {e}")
+    except Exception as e:
+        print(f"发生错误: {e}")
+
+
+# 执行删除操作
+if __name__ == "__main__":
+    remove_all_running_containers()
