@@ -10,7 +10,8 @@
 !requirements.txt
 !init.sh
 !README.md
-
+!tools/
+!tools/**/*
 upload-tool.py
 __pycache__/
 db.sqlite3

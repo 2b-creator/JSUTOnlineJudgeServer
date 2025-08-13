@@ -1,0 +1,7 @@
+title = "你好! JSUT OJ"
+timelimit = 1
+memlimit = 512
+tags = ["入门", "测试"]
+order_char = "B"
+public = true
+contest_name = "测试赛"

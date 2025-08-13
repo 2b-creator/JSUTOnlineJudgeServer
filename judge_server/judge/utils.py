@@ -247,7 +247,7 @@ def add_contest_problem(path: Path) -> CompetitionProblem:
     mem_limit = dic["memlimit"]
     tags = dic["tags"]
     is_public = dic['public']
-    order_char = dic['order']
+    order_char = dic['order_char']
     contest_name = dic['contest_name']
     contest = Competition.objects.get(name=contest_name)
     char_id = Path(path).stem
@@ -265,7 +265,7 @@ def add_contest_problem(path: Path) -> CompetitionProblem:
             test_case_path=test_case_path,
             sample_path=sample_path,
             special_judge_path=str(path/"checker.py"),
-            is_public=is_public,
+            # is_public=is_public,
             order_tag=order_char
         )
     else:
@@ -277,18 +277,18 @@ def add_contest_problem(path: Path) -> CompetitionProblem:
             content=content,
             test_case_path=test_case_path,
             sample_path=sample_path,
-            is_public=is_public,
+            # is_public=is_public,
             order_tag=order_char
         )
 
-    for i in tags:
-        alltags = ProblemTags.objects.all()
-        alltitles = [j.title for j in alltags]
-        if i in alltitles:
-            t = ProblemTags.objects.get(title=i)
-        else:
-            t = ProblemTags.objects.create(title=i)
-        t.problem.add(problem)
+    # for i in tags:
+    #     alltags = ProblemTags.objects.all()
+    #     alltitles = [j.title for j in alltags]
+    #     if i in alltitles:
+    #         t = ProblemTags.objects.get(title=i)
+    #     else:
+    #         t = ProblemTags.objects.create(title=i)
+    #     t.problem.add(problem)
     problem.save()
     contest.problems.add(problem)
 

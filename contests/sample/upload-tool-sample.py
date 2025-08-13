@@ -8,14 +8,16 @@ import requests
 import json
 import tomllib
 import shutil
+
+div_group = "div.4"
 log = {
     "username": "root",
-    "password": "1145141919810"
+    "password": "rootpwd"
 }
 
 dom = {
     "username": "admin",
-    "password": "afsV44uVd4FN3HV9"
+    "password": "mG3aFg3VYrLy3mSE"
 }
 yaml_template = """limits:
   memory: {}
@@ -78,7 +80,6 @@ comp = resp.json()
 cid = next((c["id"] for c in comp if c["name"] == cname), None)
 problems_path = directory_path/"problems"
 for i in problems_path.glob("*"):
-
     cfg = open(i/"config.toml", "r").read()
     dic = tomllib.loads(cfg)
     memlimit = dic['memlimit']
@@ -111,3 +112,27 @@ for i in problems_path.glob("*"):
     os.remove(zip_path)
     shutil.rmtree(i/"data")
     print(response)
+
+
+response = requests.post(f"{django_server}/api/login/", json=log)
+dj_headers = {
+    "Authorization": f"Bearer {response.json()['access']}"
+}
+textpath = directory_path/"readme.md"
+text = open(textpath, "r").read()
+contest = {
+    "cid": cid,
+    "text": text,
+    "rate_group": div_group
+}
+response = requests.post(
+    f"{django_server}/api/add_contest/", json=contest, headers=dj_headers)
+for i in problems_path.glob("*"):
+    zip_path = f"{i}_upload.zip"
+    create_zip(i, zip_path)
+    with open(zip_path, 'rb') as f:
+        files = {'file': (os.path.basename(zip_path), f)}
+        response = requests.post(
+            f"{django_server}/api/add_contest_problem/", headers=dj_headers, files=files,)
+        print(response)
+    os.remove(zip_path)

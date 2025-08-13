@@ -374,21 +374,22 @@ class AddCompetitionDesView(APIView):
             judge_config.scheduler = scheduler
         else:
             scheduler = judge_config.scheduler
-
+        start_time = datetime.fromisoformat(contest.start_time)
         job_id = f"contest_init_job_{scheduler}_getdom"
         scheduler.add_job(
-            get_domjudge_secrets(),
+            get_domjudge_secrets,
             'date',
-            run_date=contest.start_time-timedelta(minutes=6),
+            run_date=start_time-timedelta(minutes=6),
             # args=[data],  # 传递整个JSON数据到任务
-            id=job_id
+            id=job_id,
         )
         job_id = f"contest_init_job_{scheduler}_regdom"
         scheduler.add_job(
-            import_reg_to_dom(),
+            import_reg_to_dom,
             'date',
-            run_date=contest.start_time-timedelta(minutes=5),
-            id=job_id
+            run_date=start_time-timedelta(minutes=5),
+            id=job_id,
+            kwargs={'contest': contest}
         )
         return Response({"status": "OK", 'create_contest_job_id': job_id}, status=status.HTTP_201_CREATED)
 
@@ -526,6 +527,7 @@ class GetoneContest(APIView):
 
 
 class AddContestProblem(APIView):
+    permission_classes = [IsAdminUser]
     def post(self, request):
         uploaded_file = request.FILES['file']
         file_name = uploaded_file.name
