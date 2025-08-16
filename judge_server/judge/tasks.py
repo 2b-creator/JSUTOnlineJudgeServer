@@ -99,7 +99,8 @@ def judge_submission(self, submission_id, lang_mode):
 
 def import_reg_to_dom(contest: Competition):
     users: List[JudgeUser] = contest.registered.all()
-    registration = ContestRegistration.objects.get(user=users, contest=contest)
+    registration = ContestRegistration.objects.get(
+        user=users[0], contest=contest)
     cid = contest.cid
     resp = requests.get(f"{domserver}/api/v4/contests/{cid}/groups")
     get_dic = resp.json()
@@ -109,14 +110,23 @@ def import_reg_to_dom(contest: Competition):
         "formal_name": "Jiangsu University of Technology",
         "country": "CHN"
     }]
+
+    json_data = json.dumps(org, ensure_ascii=False).encode('utf-8')
+    url = f"{domserver}/api/v4/users/organizations"
+    files = {
+        "json": ("organizations.json", json_data, "application/json")
+    }
     dom_admin = DomServerSave.objects.get(singleton_id=1)
     user_passwd = f"{dom_admin.admin}:{dom_admin.init_passwd}"
     string_bytes = user_passwd.encode('utf-8')
     encoded_string = base64.b64encode(string_bytes).decode('utf-8')
-    resp = requests.post(f"{domserver}/api/v4/contests/{cid}/organizations", json=org, headers={
+    resp = requests.post(url, files=files, headers={
         "Authorization": f"Basic {encoded_string}"
     })
+
+    print("创建org", resp.text)
     resp = requests.get(f"{domserver}/api/v4/contests/{cid}/organizations")
+    print("查询org", resp.text)
     org_dic = resp.json()
     ls_post = []
     accounts = []
@@ -135,7 +145,20 @@ def import_reg_to_dom(contest: Competition):
             "organization_id": org_id       # 修正：单个组织ID（非列表）
         }
         ls_post.append(dic)
+
+    json_data = json.dumps(ls_post, ensure_ascii=False).encode('utf-8')
+    url = f"{domserver}/api/v4/users/teams"  # 替换实际URL
+    files = {
+        # 关键：服务端要求字段名为 "teams.json"，类型为二进制
+        "json": ("teams.json", json_data, "application/json")
+    }
+    resp = requests.post(url, files=files, headers={
+        "Authorization": f"Basic {encoded_string}"
+    })
+    print("队伍post", resp.text)
+
     resp = requests.get(f"{domserver}/api/v4/contests/{cid}/teams")
+    print("队伍get", resp)
     teams = resp.json()
     for user in users:
         team_id = next(
@@ -148,23 +171,17 @@ def import_reg_to_dom(contest: Competition):
             "team_id": team_id
         }
         accounts.append(dic)
-    json_data = json.dumps(ls_post, ensure_ascii=False).encode('utf-8')
-    url = f"{domserver}/api/v4/users/teams"  # 替换实际URL
-    files = {
-        # 关键：服务端要求字段名为 "teams.json"，类型为二进制
-        "teams.json": ("teams.json", json_data, "application/json")
-    }
-    requests.post(url, files=files, headers={
-        "Authorization": f"Basic {encoded_string}"
-    })
-    json_data = json.dumps(dic, ensure_ascii=False).encode('utf-8')
+    
+    
+    json_data = json.dumps(accounts, ensure_ascii=False).encode('utf-8')
     url = f"{domserver}/api/v4/users/accounts"
     files = {
-        "teams.json": ("teams.json", json_data, "application/json")
+        "json": ("accounts.json", json_data, "application/json")
     }
-    requests.post(url, files=files, headers={
+    resp = requests.post(url, files=files, headers={
         "Authorization": f"Basic {encoded_string}"
     })
+    print("账户post", resp.text)
 
 
 def setup_dom():

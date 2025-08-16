@@ -379,7 +379,7 @@ class AddCompetitionDesView(APIView):
         scheduler.add_job(
             get_domjudge_secrets,
             'date',
-            run_date=start_time-timedelta(minutes=6),
+            run_date=start_time-timedelta(seconds=6),
             # args=[data],  # 传递整个JSON数据到任务
             id=job_id,
         )
@@ -387,7 +387,7 @@ class AddCompetitionDesView(APIView):
         scheduler.add_job(
             import_reg_to_dom,
             'date',
-            run_date=start_time-timedelta(minutes=5),
+            run_date=start_time-timedelta(seconds=5),
             id=job_id,
             kwargs={'contest': contest}
         )
@@ -432,7 +432,6 @@ class UserRegContestView(APIView):
             contest = Competition.objects.get(id=contest_id)
         except Competition.DoesNotExist:
             return self._contest_not_found_response()
-
         # 检查所有报名条件
         error_response = self._validate_registration(contest, user)
         if error_response:
@@ -508,7 +507,7 @@ class GetoneContest(APIView):
         current_time = timezone.now()
         cid = request.data.get('cid')
         try:
-            contest = Competition.objects.get(cid=cid)
+            contest = Competition.objects.get(id=cid)
         except Competition.DoesNotExist:
             return Response({"error": "比赛不存在"}, status=status.HTTP_404_NOT_FOUND)
         return Response({
@@ -517,17 +516,20 @@ class GetoneContest(APIView):
             'start_time': contest.start_time,
             'finish_time': contest.finish_time,
             'freeze_time': contest.finish_time-contest.frozen_duration,
+            'is_started': True if current_time > contest.start_time else False,
             'is_past': False if current_time < contest.finish_time else True,
             'can_reg': True if current_time < contest.start_time - contest.all_register_before_start else False,
             "is_rated": contest.is_rated,
             'dot_color': 'green' if contest.start_time < current_time < contest.finish_time else 'dark',
             'group': contest.group.title,
-            'text': render_markdown_to_html(contest.description)
+            'text': render_markdown_to_html(contest.description),
+            'reg_count': contest.registered.count(),
         }, status=status.HTTP_200_OK)
 
 
 class AddContestProblem(APIView):
     permission_classes = [IsAdminUser]
+
     def post(self, request):
         uploaded_file = request.FILES['file']
         file_name = uploaded_file.name
@@ -548,17 +550,29 @@ class AddContestProblem(APIView):
 
 
 class GetContestProblem(APIView):
+    # permission_classes = [IsAuthenticatedOrReadOnly]
+
     def post(self, request):
+        user: JudgeUser = request.user
         contest_id = request.data.get('id')
         contest = Competition.objects.get(id=contest_id)
         problems = contest.problems.all().order_by('order_tag')
-        problem_data = [{
-            'title': problem.title,
-            'problem_char_id': problem.problem_char_id,
-            'content': problem.content,
-            # 其他需要的字段...
-            'order_tag': problem.order_tag
-        } for problem in problems]
+        if user.is_authenticated:
+            problem_data = [{
+                'title': problem.title,
+                'problem_char_id': problem.problem_char_id,
+                'content': problem.content,
+                'solved': (problem in user.solved_contest.all()),
+                'order_tag': problem.order_tag
+            } for problem in problems]
+        else:
+            problem_data = [{
+                'title': problem.title,
+                'problem_char_id': problem.problem_char_id,
+                'content': problem.content,
+                'solved': False,
+                'order_tag': problem.order_tag
+            } for problem in problems]
 
         return Response({'problems': problem_data})
 
@@ -585,21 +599,28 @@ class SubmitContestProblem(APIView):
 
     def post(self, request):
         uploaded_file = request.FILES['file']
-        filenamesplit = uploaded_file.name.split('_')
+        filenamesplit = uploaded_file.name.split('-')
         username = filenamesplit[0]
-        tagId = filenamesplit[1]
+        charId = filenamesplit[1]
+
         contest_id = filenamesplit[2]
         lang = filenamesplit[3]
+        tagId = Competition.objects.get(
+            id=contest_id).problems.get(problem_char_id=charId).order_tag
         fs = FileSystemStorage()
         saved_file = fs.save(uploaded_file.name, uploaded_file)
         contest = Competition.objects.get(id=contest_id)
+        finish_time = contest.finish_time
+        now = timezone.now()
+        if now > finish_time:
+            return Response({"sid": -1}, status=200)
         cid = contest.cid
-        file_path = fs.path(saved_file)
+        file_path = Path(fs.path(saved_file))
         resp = requests.get(f"{domserver}/api/v4/contests/{cid}/problems")
         respdic = resp.json()
         for i in respdic:
             if i['short_name'] == tagId:
-                submit_id = i['problem_id']
+                submit_id = i['id']
                 break
         user = JudgeUser.objects.get(username=username)
         domserver_password = user.domserver_password
@@ -608,8 +629,8 @@ class SubmitContestProblem(APIView):
         encoded_string = base64.b64encode(string_bytes).decode('utf-8')
         payload = {
             'code[]': (file_path.name, open(file_path, 'rb')),
-            "language_id": lang,
-            "problem_id": submit_id
+            "language_id": (None, lang),
+            "problem_id": (None, submit_id)
         }
         headers = {
             "Authorization": f"Basic {encoded_string}"
@@ -617,14 +638,21 @@ class SubmitContestProblem(APIView):
         resp = requests.post(
             f"{domserver}/api/v4/contests/{cid}/submissions", files=payload, headers=headers)
         os.remove(file_path)
+        print(resp.json())
+        sid = resp.json()['id']
+        return Response({"sid": sid}, status=200)
 
 
 class PostGetContestSubmission(APIView):
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
     def post(data, request):
         contest_id = request.data.get('contest_id')
         contest = Competition.objects.get(id=contest_id)
         username = request.data.get('username')
-        current_user = contest.registered.get(username=username)
+        sid = request.data.get('sid', 0)
+        char_id = request.data.get('charid', 0)
+        current_user: JudgeUser = contest.registered.get(username=username)
         registration = ContestRegistration.objects.get(
             user=current_user, contest=contest)
         prefix = registration.prefix
@@ -639,7 +667,28 @@ class PostGetContestSubmission(APIView):
         resp = requests.get(
             f"{domserver}/api/v4/contests/{contest.cid}/judgements", headers=headers)
         resp_dic = resp.json()
-        return Response(resp_dic, status=status.HTTP_200_OK)
+        if sid == 0 or char_id == 0:
+            ls_dic = []
+            for i in resp_dic:
+                sidone = i['id']
+                resp = requests.get(f"{domserver}/api/v4/contests/{contest.cid}/submissions/{sidone}")
+                gets = resp.json()['problem_id']
+                resp = requests.get(f"{domserver}/api/v4/contests/{contest.cid}/problems/{gets}")
+                order_tag = resp.json()['label']
+                i["order_tag"] = order_tag
+                ls_dic.append(i)
+            return Response(ls_dic, status=status.HTTP_200_OK)
+        else:
+            result = [i["judgement_type_id"]
+                      for i in resp_dic if str(sid) == i["id"]]
+            if len(result) == 0:
+                return Response({"result": "PD"}, status=status.HTTP_200_OK)
+            elif result[0] == "AC":
+                cp = CompetitionProblem.objects.get(problem_char_id=char_id)
+                current_user.solved_contest.add(cp)
+                return Response({"result": result[0]}, status=status.HTTP_200_OK)
+            else:
+                return Response({"result": result[0]}, status=status.HTTP_200_OK)
 
 
 class ScoreboardGet(APIView):
@@ -705,3 +754,90 @@ class ResetDomView(APIView):
             id=get_dom_id
         )
         return Response({"status": "DOM reset scheduled"})
+
+
+class CheckUserRegContestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        contest_id = request.data.get("contest_id")
+        contest = Competition.objects.get(id=contest_id)
+        user = request.user
+        isreg = False
+        if user in contest.registered.all():
+            isreg = True
+        dic = {
+            "isreg": isreg
+        }
+        return Response(dic)
+
+
+class GetContestScoreboard(APIView):
+    # permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def post(self, request):
+        user = request.user
+        contest_id = request.data.get('contest_id')
+        contest = Competition.objects.get(id=contest_id)
+        cid = contest.cid
+        if user.is_authenticated:
+            judgeuser: JudgeUser = user
+            dompwd = judgeuser.domserver_password
+            username = judgeuser.username
+            user_passwd = f"{username}:{dompwd}"
+            string_bytes = user_passwd.encode('utf-8')
+            encoded_string = base64.b64encode(string_bytes).decode('utf-8')
+            headers = {
+                "Authorization": f"Basic {encoded_string}"
+            }
+            resp = requests.get(
+                f"{domserver}/api/v4/contests/{cid}/scoreboard", headers=headers)
+        else:
+            resp = requests.get(
+                f"{domserver}/api/v4/contests/{cid}/scoreboard")
+        dic = resp.json()
+        return Response(dic, status=200)
+
+        # class ProblemGetView(APIView):
+        #     permission_classes = [IsAuthenticatedOrReadOnly]
+
+        #     def get(self, request):
+
+        #         problems = MainProblem.objects.all()
+        #         user = request.user
+        #         dic = {}
+        #         ls = []
+        #         for i in problems:
+        #             if not i.is_public:
+        #                 continue
+        #             tags = []
+        #             for tag in i.tags.all():
+        #                 tags.append(tag.title)
+        #             if i.submit_count == 0:
+        #                 ac_sta = 0
+        #             else:
+        #                 ac_sta = str(float('{:.2f}'.format(
+        #                     i.ac_count/i.submit_count*100)))+'%'
+        #             print(i.ac_count, i.submit_count, ac_sta)
+        #             if user.is_authenticated:
+        #                 isSolved = (i in user.solved.all())
+        #                 dic_one = {
+        #                     "problem_id": i.id,
+        #                     "char_id": i.problem_char_id,
+        #                     "title": i.title,
+        #                     "tags": tags,
+        #                     "ac_sta": ac_sta,
+        #                     "isSolved": isSolved
+        #                 }
+        #             else:
+        #                 dic_one = {
+        #                     "problem_id": i.id,
+        #                     "char_id": i.problem_char_id,
+        #                     "title": i.title,
+        #                     "tags": tags,
+        #                     "ac_sta": ac_sta,
+        #                     "isSolved": False
+        #                 }
+        #             ls.append(dic_one)
+        #         dic["data"] = ls
+        #         return Response(dic, status=status.HTTP_200_OK)

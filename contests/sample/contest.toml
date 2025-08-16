@@ -1,7 +1,7 @@
 id = "practice"
 name = "测试赛"
-start_time = 2025-08-12T19:00:00+08:00
-duration = 02:00:00
-scoreboard_thaw_time = 2025-08-12T21:00:00+08:00
+start_time = 2025-08-15T19:05:00+08:00
+duration = 03:00:00
+# scoreboard_thaw_time = 2025-08-13T21:00:00+08:00
 scoreboard_freeze_duration = 00:30:00
 penalty_time = 20

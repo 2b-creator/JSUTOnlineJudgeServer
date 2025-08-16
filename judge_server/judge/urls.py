@@ -30,12 +30,17 @@ urlpatterns = [
     path('get_contest/', GetoneContest.as_view(),
          name='get-contest'),
     path('register_contest/', UserRegContestView.as_view(), name='reg-contest'),
+    path('check_register_contest/', CheckUserRegContestView.as_view(),
+         name='check-register-contest/'),
     path('add_contest_problem/', AddContestProblem.as_view(),
          name='add-contest-problem'),
     path('get_contest_problem/', GetContestProblem.as_view(),
          name='get-contest-problem'),
+    path('get_contest_problem_detial/', GetContestProblemDetail.as_view(),
+         name='get-contest-problem-detial'),
     path('submit_contest_problem/', SubmitContestProblem.as_view(),
          name='submit-contest-problem'),
     path('get_contest_submission/', PostGetContestSubmission.as_view(),
          name='get-contest-submission'),
+    path('get_scoreboard/', GetContestScoreboard.as_view(), name='get-scoreboard')
 ]

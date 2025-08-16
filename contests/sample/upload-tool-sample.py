@@ -17,7 +17,7 @@ log = {
 
 dom = {
     "username": "admin",
-    "password": "mG3aFg3VYrLy3mSE"
+    "password": "nGcPHzKgM30wS5Af"
 }
 yaml_template = """limits:
   memory: {}

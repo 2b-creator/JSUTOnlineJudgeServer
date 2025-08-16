@@ -12,6 +12,7 @@ def generate_domserver_password():
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(10))
 
+
 class DomServerSave(models.Model):
     singleton_id = models.IntegerField(default=1, unique=True, editable=False)
     admin = models.CharField(max_length=100)
@@ -20,8 +21,10 @@ class DomServerSave(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['singleton_id'], name='unique_singleton')
+            models.UniqueConstraint(
+                fields=['singleton_id'], name='unique_singleton')
         ]
+
 
 class MainProblem(models.Model):
     title = models.CharField(max_length=100)
@@ -62,6 +65,8 @@ class JudgeUser(AbstractUser):
     submit_count = models.IntegerField(default=0)
     stu_id = models.TextField()
     solved = models.ManyToManyField(MainProblem, related_name='solved')
+    solved_contest = models.ManyToManyField(
+        CompetitionProblem, related_name='solved_contest')
     tried = models.ManyToManyField(MainProblem, related_name='tried')
     avatar = models.TextField(null=True)
     rating = models.IntegerField(default=0)
@@ -141,7 +146,7 @@ class Competition(models.Model):
     registered = models.ManyToManyField(
         JudgeUser, through='ContestRegistration', related_name='registered_contest')
     all_register_before_start = models.DurationField(
-        default=timedelta(minutes=15))
+        default=timedelta(minutes=1))
     problems = models.ManyToManyField(
         CompetitionProblem, related_name='problems')
     submissions = models.ManyToManyField(
