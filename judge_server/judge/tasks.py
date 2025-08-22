@@ -142,7 +142,7 @@ def import_reg_to_dom(contest: Competition):
             "group_ids": group_ids,          # 修正：组ID列表
             "name": user.username,
             "display_name": user.nickname if user.nickname else user.username,
-            "organization_id": org_id       # 修正：单个组织ID（非列表）
+            # "organization_id": org_id       # 修正：单个组织ID（非列表）
         }
         ls_post.append(dic)
 
@@ -156,6 +156,7 @@ def import_reg_to_dom(contest: Competition):
         "Authorization": f"Basic {encoded_string}"
     })
     print("队伍post", resp.text)
+    print("队伍post json: ", ls_post)
 
     resp = requests.get(f"{domserver}/api/v4/contests/{cid}/teams")
     print("队伍get", resp)

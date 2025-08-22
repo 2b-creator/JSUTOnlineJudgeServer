@@ -139,6 +139,7 @@ class Competition(models.Model):
     name = models.CharField(max_length=100)
     cid = models.CharField(max_length=100)
     description = models.TextField()
+    is_archive = models.BooleanField(default=False)
     active_time = models.DateTimeField(auto_now_add=True)
     start_time = models.DateTimeField(blank=True)
     frozen_duration = models.DurationField(blank=True)
@@ -176,6 +177,16 @@ class ContestRegistration(models.Model):
     prefix = models.CharField(max_length=100)
     # 例如：pending, approved, rejected
     status = models.CharField(max_length=20, default='accept')
+    submissions = models.JSONField(null=True)
 
     class Meta:
         unique_together = ('user', 'contest')  # 确保用户不能重复注册同一比赛
+
+
+class ContestSubmission(models.Model):
+    sid = models.IntegerField()
+    contest = models.ForeignKey(Competition, on_delete=models.CASCADE)
+    user = models.ForeignKey(JudgeUser, on_delete=models.CASCADE)
+    code = models.TextField()
+    problem = models.ForeignKey(CompetitionProblem, on_delete=models.CASCADE)
+    time = models.CharField(max_length=20)

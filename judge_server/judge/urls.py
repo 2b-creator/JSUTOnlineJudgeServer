@@ -42,5 +42,7 @@ urlpatterns = [
          name='submit-contest-problem'),
     path('get_contest_submission/', PostGetContestSubmission.as_view(),
          name='get-contest-submission'),
-    path('get_scoreboard/', GetContestScoreboard.as_view(), name='get-scoreboard')
+    path('get_scoreboard/', GetContestScoreboard.as_view(), name='get-scoreboard'),
+    path('get_teamfrom_id/', GetTeamFromId.as_view(), name='get-teamfrom-id')
+
 ]

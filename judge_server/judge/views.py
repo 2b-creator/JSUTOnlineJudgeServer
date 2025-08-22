@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny, I
 from rest_framework.views import APIView
 from django_apscheduler.jobstores import DjangoJobStore, register_events, register_job
 from .apps import JudgeConfig
-from .models import CompetitionGroup, ContestRegistration, Submission, JudgeUser, MainProblem, ProblemTags
+from .models import CompetitionGroup, ContestRegistration, ContestSubmission, Submission, JudgeUser, MainProblem, ProblemTags
 from .models import JudgeUser
 from .tasks import get_domjudge_secrets, import_reg_to_dom, judge_submission, remove_all_running_containers, setup_dom
 from django.utils import timezone
@@ -556,6 +556,9 @@ class GetContestProblem(APIView):
         user: JudgeUser = request.user
         contest_id = request.data.get('id')
         contest = Competition.objects.get(id=contest_id)
+        time_now = timezone.now()
+        if time_now < contest.start_time:
+            return Response({"status": "Contest not start now!"}, status=403)
         problems = contest.problems.all().order_by('order_tag')
         if user.is_authenticated:
             problem_data = [{
@@ -573,7 +576,6 @@ class GetContestProblem(APIView):
                 'solved': False,
                 'order_tag': problem.order_tag
             } for problem in problems]
-
         return Response({'problems': problem_data})
 
 
@@ -607,6 +609,8 @@ class SubmitContestProblem(APIView):
         lang = filenamesplit[3]
         tagId = Competition.objects.get(
             id=contest_id).problems.get(problem_char_id=charId).order_tag
+        problem = Competition.objects.get(
+            id=contest_id).problems.get(problem_char_id=charId)
         fs = FileSystemStorage()
         saved_file = fs.save(uploaded_file.name, uploaded_file)
         contest = Competition.objects.get(id=contest_id)
@@ -616,6 +620,7 @@ class SubmitContestProblem(APIView):
             return Response({"sid": -1}, status=200)
         cid = contest.cid
         file_path = Path(fs.path(saved_file))
+        code = open(file_path, "r").read()
         resp = requests.get(f"{domserver}/api/v4/contests/{cid}/problems")
         respdic = resp.json()
         for i in respdic:
@@ -623,6 +628,8 @@ class SubmitContestProblem(APIView):
                 submit_id = i['id']
                 break
         user = JudgeUser.objects.get(username=username)
+        if not ContestRegistration.objects.filter(user=user, contest=contest).first():
+            return Response({"sid": -2}, status=200)
         domserver_password = user.domserver_password
         user_passwd = f"{username}:{domserver_password}"
         string_bytes = user_passwd.encode('utf-8')
@@ -640,6 +647,9 @@ class SubmitContestProblem(APIView):
         os.remove(file_path)
         print(resp.json())
         sid = resp.json()['id']
+        ctime = resp.json()['contest_time']
+        ContestSubmission.objects.create(
+            sid=sid, contest=contest, user=user, code=code, problem=problem, time=ctime)
         return Response({"sid": sid}, status=200)
 
 
@@ -652,43 +662,68 @@ class PostGetContestSubmission(APIView):
         username = request.data.get('username')
         sid = request.data.get('sid', 0)
         char_id = request.data.get('charid', 0)
-        current_user: JudgeUser = contest.registered.get(username=username)
-        registration = ContestRegistration.objects.get(
-            user=current_user, contest=contest)
-        prefix = registration.prefix
-        team_id = f"{prefix}-{registration.id}"
-        domserver_password = current_user.domserver_password
-        user_passwd = f"{username}:{domserver_password}"
-        string_bytes = user_passwd.encode('utf-8')
-        encoded_string = base64.b64encode(string_bytes).decode('utf-8')
-        headers = {
-            "Authorization": f"Basic {encoded_string}"
-        }
-        resp = requests.get(
-            f"{domserver}/api/v4/contests/{contest.cid}/judgements", headers=headers)
-        resp_dic = resp.json()
-        if sid == 0 or char_id == 0:
-            ls_dic = []
-            for i in resp_dic:
-                sidone = i['id']
-                resp = requests.get(f"{domserver}/api/v4/contests/{contest.cid}/submissions/{sidone}")
-                gets = resp.json()['problem_id']
-                resp = requests.get(f"{domserver}/api/v4/contests/{contest.cid}/problems/{gets}")
-                order_tag = resp.json()['label']
-                i["order_tag"] = order_tag
-                ls_dic.append(i)
-            return Response(ls_dic, status=status.HTTP_200_OK)
-        else:
-            result = [i["judgement_type_id"]
-                      for i in resp_dic if str(sid) == i["id"]]
-            if len(result) == 0:
-                return Response({"result": "PD"}, status=status.HTTP_200_OK)
-            elif result[0] == "AC":
-                cp = CompetitionProblem.objects.get(problem_char_id=char_id)
-                current_user.solved_contest.add(cp)
-                return Response({"result": result[0]}, status=status.HTTP_200_OK)
+        current_user: JudgeUser = JudgeUser.objects.get(username=username)
+        if contest.is_archive == False:
+            registration = ContestRegistration.objects.filter(
+                user=current_user, contest=contest).first()
+            if registration:
+                prefix = registration.prefix
+                team_id = f"{prefix}-{registration.id}"
+            domserver_password = current_user.domserver_password
+            user_passwd = f"{username}:{domserver_password}"
+            string_bytes = user_passwd.encode('utf-8')
+            encoded_string = base64.b64encode(string_bytes).decode('utf-8')
+            headers = {
+                "Authorization": f"Basic {encoded_string}"
+            }
+            resp = requests.get(
+                f"{domserver}/api/v4/contests/{contest.cid}/judgements", headers=headers)
+            resp_dic = resp.json()
+            if sid == 0 or char_id == 0:
+                ls_dic = []
+                for i in resp_dic:
+                    sidone = i['id']
+                    resp = requests.get(
+                        f"{domserver}/api/v4/contests/{contest.cid}/submissions/{sidone}")
+                    gets = resp.json()['problem_id']
+                    ctime = resp.json()['contest_time']
+                    resp = requests.get(
+                        f"{domserver}/api/v4/contests/{contest.cid}/problems/{gets}")
+                    order_tag = resp.json()['label']
+                    i["order_tag"] = order_tag
+                    problem = contest.problems.get(order_tag=order_tag)
+                    codeCs = ContestSubmission.objects.filter(
+                        sid=sidone,
+                        contest=contest,
+                        user=current_user,
+                        problem=problem,
+                        time=ctime
+                    ).first()
+                    i['source'] = codeCs.code if codeCs else None
+                    ls_dic.append(i)
+                cr = ContestRegistration.objects.filter(
+                    contest=contest, user=current_user).first()
+                cr.submissions = json.dumps(ls_dic)
+                return Response(ls_dic, status=status.HTTP_200_OK)
             else:
-                return Response({"result": result[0]}, status=status.HTTP_200_OK)
+                result = [i["judgement_type_id"]
+                          for i in resp_dic if str(sid) == i["id"]]
+                if len(result) == 0:
+                    return Response({"result": "PD"}, status=status.HTTP_200_OK)
+                elif result[0] == "AC":
+                    cp = CompetitionProblem.objects.get(
+                        problem_char_id=char_id)
+                    current_user.solved_contest.add(cp)
+                    return Response({"result": result[0]}, status=status.HTTP_200_OK)
+                else:
+                    return Response({"result": result[0]}, status=status.HTTP_200_OK)
+        else:
+            if sid == 0 or char_id == 0:
+                user = JudgeUser.objects.get(username=username)
+                Cr = ContestRegistration.objects.get(
+                    user=user, contest=contest)
+                resp_dic = Cr.submissions
+                return Response(resp_dic, status=status.HTTP_200_OK)
 
 
 class ScoreboardGet(APIView):
@@ -841,3 +876,13 @@ class GetContestScoreboard(APIView):
         #             ls.append(dic_one)
         #         dic["data"] = ls
         #         return Response(dic, status=status.HTTP_200_OK)
+
+
+class GetTeamFromId(APIView):
+    def get(self, request):
+        resp = requests.get(f"{domserver}/api/v4/teams/")
+        ls = resp.json()
+        dic = {}
+        for i in ls:
+            dic[f"{i['id']}"] = i['name']
+        return Response(dic, 200)
